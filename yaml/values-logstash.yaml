@@ -1,0 +1,140 @@
+replicas: 1
+
+image: "docker.elastic.co/logstash/logstash"
+imageTag: "8.0.0-SNAPSHOT"
+imagePullPolicy: "IfNotPresent"
+imagePullSecrets: []
+
+logstashJavaOpts: "-Xmx1g -Xms1g"
+
+resources:
+  requests:
+    cpu: "400m"
+    memory: "800Mi"
+  limits:
+    cpu: "500m"
+    memory: "1024Mi"
+
+volumeClaimTemplate:
+  accessModes: [ "ReadWriteOnce" ]
+  storageClassName: "ekzeroclient"
+  resources:
+    requests:
+      storage: 1Gi
+
+persistence:
+  enabled: true
+
+logstashConfig:
+  logstash.yml: |
+    http.host: 0.0.0.0
+    xpack.monitoring.enabled: true
+    xpack.monitoring.elasticsearch.username: '${ELASTICSEARCH_USERNAME}'
+    xpack.monitoring.elasticsearch.password: '${ELASTICSEARCH_PASSWORD}'
+    xpack.monitoring.elasticsearch.hosts: ["https://elastic:9200"]
+    xpack.monitoring.elasticsearch.ssl.certificate_authority: /usr/share/logstash/config/certs/elastic-certificate.crt
+
+logstashPipeline:
+  uptime.conf: |
+    input {
+      redis {
+        data_type => "list"
+        #batch_count => 100
+        threads => 4
+        key => "ekzero-k8s"
+        host => "redis-master"
+        password => "pZNKSJEuW6iFpndCELv0PWjFptPjHaii"
+        tags => [ 'ekzero-k8s', 'ekzero', 'k8s' ]
+      }
+    }
+
+    input {
+      redis {
+        data_type => "list"
+        #batch_count => 100
+        threads => 4
+        key => "oneviz-k8s"
+        host => "redis-master"
+        password => "pZNKSJEuW6iFpndCELv0PWjFptPjHaii"
+        tags => [ 'oneviz-k8s', 'oneviz', 'k8s']
+      }
+    }
+
+    filter {
+      if [message] =~ "\A\{.+\}\z" {
+        json {
+          source => "message"
+        }
+      }
+
+      if 'k8s' in [tags] {
+        mutate {
+          copy => { "[kubernetes][namespace]" => "environment" }
+          copy => { "[kubernetes][pod][name]" => "service" }
+          remove_field => ["[host]", "[ecs]", "[container]","[kubernetes][namespace_uid]", "[kubernetes][container]", "[kubernetes][namespace_labels]", "[kubernetes][labels]", "[kubernetes][node][labels]", "[kubernetes][node][hostname]", "[agent]", "@metadata", "@version", "stream", "_type", "_score", "input.type", "log.file.path", "type"]
+        }
+      }
+    }
+
+    output {
+      stdout { codec => rubydebug }
+      if 'ekzero-k8s' in [tags]{
+        elasticsearch {
+          hosts => ["https://elastic:9200"]
+          cacert => "/usr/share/logstash/config/certs/elastic-certificate.crt"
+          user => '${ELASTICSEARCH_USERNAME}'
+          password => '${ELASTICSEARCH_PASSWORD}'
+          index => "ekzero-k8s-%{+YYYY.MM.dd}"
+          ilm_enabled => true
+          ilm_rollover_alias => "ekzero-k8s"
+          ilm_policy => "logstash-policy"
+        }
+      }
+
+      if 'oneviz-k8s' in [tags]{
+        elasticsearch {
+          hosts => ["https://elastic:9200"]
+          cacert => "/usr/share/logstash/config/certs/elastic-certificate.crt"
+          user => '${ELASTICSEARCH_USERNAME}'
+          password => '${ELASTICSEARCH_PASSWORD}'
+          index => "oneviz-k8s-%{+YYYY.MM.dd}"
+          ilm_enabled => true
+          ilm_rollover_alias => "oneviz-k8s"
+          ilm_policy => "logstash-policy"
+        }
+      }
+    }
+
+
+
+secretMounts:
+  - name: elastic-certificate-crt
+    secretName: elastic-certificate-crt
+    path: /usr/share/logstash/config/certs
+
+extraEnvs:
+  - name: 'ELASTICSEARCH_USERNAME'
+    valueFrom:
+      secretKeyRef:
+        name: elastic-credentials
+        key: username
+  - name: 'ELASTICSEARCH_PASSWORD'
+    valueFrom:
+      secretKeyRef:
+        name: elastic-credentials
+        key: password
+
+tolerations:
+- key: env
+  operator: Equal
+  value: logging-spot
+  effect: NoSchedule
+
+nodeAffinity:
+  requiredDuringSchedulingIgnoredDuringExecution:
+    nodeSelectorTerms:
+    - matchExpressions:
+      - key: env
+        operator: In
+        values:
+        - logging-spot

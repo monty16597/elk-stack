@@ -1,0 +1,124 @@
+image: "docker.elastic.co/beats/filebeat"
+imageTag: "8.0.0-SNAPSHOT"
+imagePullPolicy: "IfNotPresent"
+
+nameOverride: "filebeat-central"
+fullnameOverride: "filebeat-central"
+
+filebeatConfig:
+  filebeat.yml: |
+    filebeat.inputs:
+    - type: container
+      paths:
+        - /var/log/containers/*.log
+      multiline.pattern: '^[[:space:]]+(at|\.{3})\b|^Caused by:'
+      multiline.negate: false
+      multiline.match: after
+      processors:
+        - add_kubernetes_metadata:
+            matchers:
+            - logs_path:
+                logs_path: "/var/log/containers/"
+        - drop_event.when.not.or:
+            - equals.kubernetes.namespace: "ekzeroclient-allen-and-jones-roofing-dev"
+            - equals.kubernetes.namespace: "ekzeroclient-allen-and-jones-roofing-prod"
+            - equals.kubernetes.namespace: "ekzeroclient-bliss-dev"
+            - equals.kubernetes.namespace: "ekzeroclient-eternal-dev"
+            - equals.kubernetes.namespace: "ekzeroclient-eternal-prod"
+            - equals.kubernetes.namespace: "ekzeroclient-jobboard-dev"
+            - equals.kubernetes.namespace: "ekzeroclient-jobboard-prod"
+            - equals.kubernetes.namespace: "ekzeroclient-loyala2z-dev"
+            - equals.kubernetes.namespace: "ekzeroclient-optometric-dev"
+        - drop_fields:
+            fields: ["log", "docker", "agent", "stream", "host", "ecs", "container.image", "container.labels", "input", "kubernetes.pod.uid", "kubernetes.node.uid", "kubernetes.labels.pod-template-hash", "kubernetes.namespace.labels.name", "kubernetes.container.image", "kubernetes.namespace.uid"]
+    output.redis:
+      hosts: ["redis-master"]
+      password: "pZNKSJEuW6iFpndCELv0PWjFptPjHaii"
+      key: "ekzero-k8s"
+      db: 0
+      timeout: 30
+
+
+# /var/lib/docker/containers/17334fd3726702947f99ae84dbdd89e376375cc2453b1a217d1a6066a0b4db65/*-json.log
+
+# filebeatConfig:
+#   filebeat.yml: |
+#     filebeat.autodiscover:
+#       providers:
+#         - type: kubernetes
+#           templates:
+#             - condition.and:
+#               - equals.kubernetes.namespace: vegitone-dev
+
+#     # processors:
+#     #   - drop_fields:
+#     #       fields: ["log", "docker", "agent", "stream", "host", "ecs", "container.image", "container.labels", "input", "kubernetes.pod.uid", "kubernetes.node.uid", "kubernetes.labels.pod-template-hash", "kubernetes.namespace.labels.name", "kubernetes.container.image", "kubernetes.namespace.uid"]
+
+#     setup.kibana:
+#       hosts: "kibana:5601"
+
+#     output.kafka:
+#       hosts: ["kafka:9092"]
+#       topic: 'vegitone'
+#       partition.round_robin:
+#         reachable_only: false
+#       required_acks: 1
+#       compression: gzip
+#       max_message_bytes: 1000000
+
+livenessProbe:
+  exec:
+    command:
+      - sh
+      - -c
+      - |
+        #!/usr/bin/env bash -e
+        curl --fail 127.0.0.1:5066
+  failureThreshold: 3
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+
+readinessProbe:
+  exec:
+    command:
+      - sh
+      - -c
+      - |
+        #!/usr/bin/env bash -e
+        filebeat test output
+  failureThreshold: 3
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "100Mi"
+  limits:
+    cpu: "150m"
+    memory: "200Mi"
+
+updateStrategy: RollingUpdate
+
+tolerations:
+- key: env
+  operator: Equal
+  value: ekzeroclient-dev
+  effect: NoSchedule
+- key: env
+  operator: Equal
+  value: ekzeroclient-prod
+  effect: NoSchedule
+
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: env
+          operator: In
+          values:
+          - ekzeroclient-dev
+          - ekzeroclient-prod

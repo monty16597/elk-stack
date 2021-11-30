@@ -1,0 +1,55 @@
+global:
+  storageClass: ""
+  redis:
+    password: "pZNKSJEuW6iFpndCELv0PWjFptPjHaii"
+
+fullnameOverride: "redis"
+image:
+  registry: docker.io
+  repository: bitnami/redis
+  tag: 6.2.6-debian-10-r49
+  pullPolicy: IfNotPresent
+
+architecture: standalone
+auth:
+  enabled: true
+  sentinel: true
+  password: ""
+
+master:
+  tolerations:
+  - key: env
+    operator: Equal
+    value: logging
+    effect: NoSchedule
+
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: env
+            operator: In
+            values:
+            - logging
+
+  resources:
+    limits:
+      cpu: "1"
+      memory: "1024Mi"
+    requests:
+      cpu: "800m"
+      memory: "824Mi"
+
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 8Gi
+    annotations: {}
+  service:
+    type: ClusterIP
+    port: 6379
+
+replica:
+  replicaCount: 0
